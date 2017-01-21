@@ -88,11 +88,19 @@ func (scan *Scan) Scan(wait *sync.WaitGroup) {
                     //Ignore errors (such as permission denied)
                     if fi.IsDir() {
                         return filepath.SkipDir
+                    } else {
+                        return err
                     }
                 }
 
-                //Scan file
-                if !fi.IsDir() {
+                //Directory
+                if fi.IsDir() {
+                    return err
+                }
+
+                //Regular file
+                //Skip symlinks, a symlink target might be deleted as duplicate
+                if fi.Mode().IsRegular() {
                     scan.scanFile(file, fi)
                 }
 
