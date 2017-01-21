@@ -4,6 +4,7 @@ import (
     "os"
     "io/ioutil"
     "sync"
+    "sort"
     "path/filepath"
     "encoding/json"
 )
@@ -149,6 +150,11 @@ func (scan *Scan) BuildHashFilesMap() map[string]FileList {
             hashMap[hash] = FileList{}
         }
         hashMap[hash] = append(hashMap[hash], file)
+    }
+
+    //Sort
+    for _, files := range hashMap {
+        sort.Sort(FileList(files))
     }
 
     scan.HashFilesMap = hashMap

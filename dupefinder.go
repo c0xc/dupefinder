@@ -5,6 +5,8 @@ import (
     "os"
     "flag"
     "sync"
+    "path/filepath"
+    "io/ioutil"
 
     "github.com/dustin/go-humanize"
 )
@@ -29,12 +31,15 @@ func main() {
     var listDuplicateGroups bool
     flag.BoolVar(&listDuplicateGroups, "list-duplicate-groups", true,
         "list duplicate groups")
-    var listDuplicates bool
-    flag.BoolVar(&listDuplicates, "list-duplicates", true,
-        "list duplicate files (excluding first one)")
     var showSummary bool
     flag.BoolVar(&showSummary, "show-summary", true,
         "show summary of found duplicates")
+    var deleteDuplicates bool
+    flag.BoolVar(&deleteDuplicates, "delete-duplicates", false,
+        "delete duplicates (keep one file per group)")
+    var linkDuplicates bool
+    flag.BoolVar(&linkDuplicates, "link-duplicates", false,
+        "replace duplicates with hardlinks")
 
     //Parse arguments
     flag.Parse()
@@ -119,8 +124,8 @@ func main() {
     //List duplicate groups
     duplicatesMap := scan.DuplicatesMap()
     if listDuplicateGroups {
-        for _, duplicates := range duplicatesMap {
-            for _, file := range duplicates {
+        for _, files := range duplicatesMap {
+            for _, file := range files {
                 fmt.Printf("%s\n", file.Path)
             }
             fmt.Printf("\n")
@@ -140,6 +145,61 @@ func main() {
         fmt.Printf("Size of duplicates:\t%s (%d B)\n",
             humanize.IBytes(duplicatesSize), duplicatesSize)
         fmt.Printf("\n")
+    }
+
+    //Action
+    if deleteDuplicates {
+        //Delete duplicates (keep first one per group)
+
+        for _, files := range duplicatesMap {
+            duplicates := files[1:] //except first one
+            for _, file := range duplicates {
+                err := os.Remove(file.Path)
+                if err != nil {
+                    fmt.Fprintf(os.Stderr,
+                        "Error deleting file %s: %s\n", file.Path, err.Error())
+                    continue
+                }
+                fmt.Printf("Deleted %s\n", file.Path)
+            }
+        }
+    } else if linkDuplicates {
+        //Replace duplicates with links
+        //We assume they're all on the same filesystem
+
+        for _, files := range duplicatesMap {
+            firstFile := files[0]
+            duplicates := files[1:] //except first one
+            for _, file := range duplicates {
+                //Create hardlink in destination directory
+                //Replace duplicate only if hardlink created successfully
+                dir := filepath.Dir(file.Path)
+                prefix := "DUPE"
+                f, err := ioutil.TempFile(dir, prefix)
+                if err != nil {
+                    fmt.Fprintf(os.Stderr,
+                        "Error writing to directory %s: %s\n",
+                        dir, err.Error())
+                    continue
+                }
+                tmpFilePath := f.Name()
+                f.Close()
+                os.Remove(tmpFilePath)
+                if err := os.Link(firstFile.Path, tmpFilePath); err != nil {
+                    fmt.Fprintf(os.Stderr,
+                        "Error creating link: %s\n",
+                        err.Error())
+                    continue
+                }
+                if err := os.Rename(tmpFilePath, file.Path); err != nil {
+                    fmt.Fprintf(os.Stderr,
+                        "Error replacing file %s with link: %s\n",
+                        file.Path, err.Error())
+                    continue
+                }
+                fmt.Printf("Replaced %s\n", file.Path)
+            }
+        }
     }
 
 }

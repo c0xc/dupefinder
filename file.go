@@ -19,6 +19,18 @@ type File struct {
 
 type FileList []*File
 
+func (list FileList) Len() int {
+    return len(list)
+}
+
+func (list FileList) Swap(i, j int) {
+    list[i], list[j] = list[j], list[i]
+}
+
+func (list FileList) Less(i, j int) bool {
+    return list[i].ModificationTime < list[j].ModificationTime
+}
+
 type FileMap map[string]*File
 
 func (file *File) Exists() bool {
