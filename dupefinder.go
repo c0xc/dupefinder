@@ -95,10 +95,22 @@ func main() {
     }
 
     //Start scan
-    wait.Add(1)
-    fmt.Fprintf(os.Stderr, "Scanning...\n")
-    scan.Scan(&wait)
-    wait.Wait()
+    {
+        wait.Add(1)
+        line := "Scanning..."
+        fmt.Fprintf(os.Stderr, line)
+        scan.Scan(&wait)
+        wait.Wait()
+        for i := 0; i < len(line); i++ {
+            fmt.Fprintf(os.Stderr, "\b")
+        }
+        for i := 0; i < len(line); i++ {
+            fmt.Fprintf(os.Stderr, " ")
+        }
+        for i := 0; i < len(line); i++ {
+            fmt.Fprintf(os.Stderr, "\b")
+        }
+    }
 
     //Export file map
     if mapFileReplace && mapFileExport == "" {
