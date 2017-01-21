@@ -171,6 +171,11 @@ func (scan *Scan) DuplicatesMap() map[string]FileList {
             continue
         }
 
+        //Skip empty files
+        if files[0].Size == 0 {
+            continue
+        }
+
         //Found hash with multiple files
         duplicates[hash] = files
     }
