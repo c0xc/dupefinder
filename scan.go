@@ -131,7 +131,7 @@ func (scan *Scan) scanFile(file string, fi os.FileInfo) error {
 
     //Get inode number, if possible
     if stat, ok := fi.Sys().(*syscall.Stat_t); ok {
-        newFile.Inum = stat.Ino
+        newFile.Inum = uint64(stat.Ino)
     }
 
     //Check for old file object
