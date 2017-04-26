@@ -13,7 +13,9 @@ import (
 type Scan struct {
     Paths []string
     Files FileMap
-    HashFilesMap map[string]FileList
+    HashFilesMap map[string]Files
+    SortOrder int
+    SortReversed bool
 }
 
 func NewScan() *Scan {
@@ -123,6 +125,7 @@ func (scan *Scan) scanFile(file string, fi os.FileInfo) error {
     }
     newFile := &File{ RelativePath: file }
     newFile.Path = fullPath
+    newFile.Name = fi.Name()
     newFile.Size = fi.Size()
     newFile.ModificationTime = fi.ModTime().Unix()
 
@@ -151,24 +154,31 @@ func (scan *Scan) scanFile(file string, fi os.FileInfo) error {
     return nil
 }
 
-func (scan *Scan) BuildHashFilesMap() map[string]FileList {
+func (scan *Scan) BuildHashFilesMap() map[string]Files {
     //Build hash map (hash -> file list)
-    hashMap := make(map[string]FileList)
+    hashMap := make(map[string]Files)
     for _, file := range scan.Files {
         if !file.IsHashed() {
             //File not hashed, error
             continue
         }
         hash := file.HashValue()
-        if _, found := hashMap[hash]; !found {
-            hashMap[hash] = FileList{}
+        filesGroup := Files{
+            sort: scan.SortOrder,
+            reverse: scan.SortReversed,
         }
-        hashMap[hash] = append(hashMap[hash], file)
+        if _, found := hashMap[hash]; !found {
+            hashMap[hash] = filesGroup //new group
+        } else {
+            filesGroup = hashMap[hash] //incomplete list
+        }
+        filesGroup.Files = append(filesGroup.Files, file)
+        hashMap[hash] = filesGroup //update list
     }
 
     //Sort
     for _, files := range hashMap {
-        sort.Sort(FileList(files))
+        sort.Sort(files)
     }
 
     scan.HashFilesMap = hashMap
@@ -181,17 +191,18 @@ func (scan *Scan) DuplicatesMap() map[string]FileList {
     //Go through hash map
     var addedInums []uint64
     for hash, files := range scan.HashFilesMap {
+        fileList := files.Files
         var duplicateFiles FileList
 
         //Skip empty files
-        if files[0].Size == 0 {
+        if fileList[0].Size == 0 {
             continue
         }
 
         //Found hash with multiple files
         addedInums = nil
         FILES:
-        for _, file := range files {
+        for _, file := range fileList {
             if file.Inum != 0 {
                 for _, otherInum := range addedInums {
                     if otherInum == file.Inum {

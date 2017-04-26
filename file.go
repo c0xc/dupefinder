@@ -11,6 +11,7 @@ import (
 type File struct {
     Path string
     RelativePath string
+    Name string
     Size int64
     ModificationTime int64
     MD5 string
@@ -20,16 +21,35 @@ type File struct {
 
 type FileList []*File
 
-func (list FileList) Len() int {
-    return len(list)
+type Files struct {
+    Files FileList
+    sort int
+    reverse bool
 }
 
-func (list FileList) Swap(i, j int) {
-    list[i], list[j] = list[j], list[i]
+func (f Files) Len() int {
+    return len(f.Files)
 }
 
-func (list FileList) Less(i, j int) bool {
-    return list[i].ModificationTime < list[j].ModificationTime
+func (f Files) Swap(i, j int) {
+    f.Files[i], f.Files[j] = f.Files[j], f.Files[i]
+}
+
+func (f Files) Less(i, j int) bool {
+    var l bool
+    if f.sort == 0 {
+        l = f.Files[i].Path < f.Files[j].Path
+    } else if f.sort == 1 {
+        l = f.Files[i].Name < f.Files[j].Name
+    } else if f.sort == 2 {
+        l = f.Files[i].Size < f.Files[j].Size
+    } else if f.sort == 3 {
+        l = f.Files[i].ModificationTime > f.Files[j].ModificationTime
+    }
+    if f.reverse {
+        l = !l
+    }
+    return l
 }
 
 type FileMap map[string]*File

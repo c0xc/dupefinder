@@ -40,6 +40,18 @@ func main() {
     var linkDuplicates bool
     flag.BoolVar(&linkDuplicates, "link-duplicates", false,
         "replace duplicates with hardlinks")
+    var sortReversed bool
+    flag.BoolVar(&sortReversed, "sort-reversed", false,
+        "show duplicate groups in reversed order")
+    var sortPath bool
+    flag.BoolVar(&sortPath, "sort-path", true,
+        "sort duplicate groups by file path")
+    var sortName bool
+    flag.BoolVar(&sortName, "sort-name", false,
+        "sort duplicate groups by file name")
+    var sortTime bool
+    flag.BoolVar(&sortTime, "sort-time", false,
+        "sort duplicate groups by file time")
 
     //Parse arguments
     flag.Parse()
@@ -53,6 +65,16 @@ func main() {
 
     //Scan object
     scan := NewScan()
+    if sortPath {
+        scan.SortOrder = 0
+    }
+    if sortName {
+        scan.SortOrder = 1
+    }
+    if sortTime {
+        scan.SortOrder = 3
+    }
+    scan.SortReversed = sortReversed
 
     //Search path
     for _, path := range flag.Args() {
