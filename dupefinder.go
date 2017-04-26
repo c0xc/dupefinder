@@ -150,10 +150,13 @@ func main() {
         totalFilesSize := uint64(scan.TotalFilesSize())
         groupCount := len(duplicatesMap)
         duplicatesSize := uint64(scan.DuplicatesSize())
+        var duplicateCount int
+        duplicateCount = len(scan.AdditionalFiles())
         fmt.Printf("Files:\t\t\t%d\n", totalFileCount)
         fmt.Printf("Total size:\t\t%s (%d B)\n",
             humanize.IBytes(totalFilesSize), totalFilesSize)
         fmt.Printf("Duplicate groups:\t%d\n", groupCount)
+        fmt.Printf("Duplicate count:\t%d\n", duplicateCount)
         fmt.Printf("Size of duplicates:\t%s (%d B)\n",
             humanize.IBytes(duplicatesSize), duplicatesSize)
         fmt.Printf("\n")

@@ -15,6 +15,7 @@ type File struct {
     ModificationTime int64
     MD5 string
     SHA1 string
+    Inum uint64
 }
 
 type FileList []*File

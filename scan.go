@@ -2,6 +2,7 @@ package main
 
 import (
     "os"
+    "syscall"
     "io/ioutil"
     "sync"
     "sort"
@@ -125,6 +126,11 @@ func (scan *Scan) scanFile(file string, fi os.FileInfo) error {
     newFile.Size = fi.Size()
     newFile.ModificationTime = fi.ModTime().Unix()
 
+    //Get inode number, if possible
+    if stat, ok := fi.Sys().(*syscall.Stat_t); ok {
+        newFile.Inum = stat.Ino
+    }
+
     //Check for old file object
     oldFile, found := scan.Files[fullPath]
     if found {
@@ -173,11 +179,9 @@ func (scan *Scan) DuplicatesMap() map[string]FileList {
     duplicates := make(map[string]FileList)
 
     //Go through hash map
+    var addedInums []uint64
     for hash, files := range scan.HashFilesMap {
-        //Skip if only one file with current hash
-        if len(files) == 1 {
-            continue
-        }
+        var duplicateFiles FileList
 
         //Skip empty files
         if files[0].Size == 0 {
@@ -185,10 +189,51 @@ func (scan *Scan) DuplicatesMap() map[string]FileList {
         }
 
         //Found hash with multiple files
-        duplicates[hash] = files
+        addedInums = nil
+        FILES:
+        for _, file := range files {
+            if file.Inum != 0 {
+                for _, otherInum := range addedInums {
+                    if otherInum == file.Inum {
+                        continue FILES
+                    }
+                }
+                addedInums = append(addedInums, file.Inum)
+            }
+            duplicateFiles = append(duplicateFiles, file)
+        }
+
+        //Skip if only one file with current hash
+        if len(duplicateFiles) == 1 {
+            continue
+        }
+
+        //Add list of duplicates for current hash (identical files)
+        duplicates[hash] = duplicateFiles
+
     }
 
     return duplicates
+}
+
+func (scan *Scan) AdditionalFilesMap() map[string]FileList {
+    additional := make(map[string]FileList)
+
+    for hash, files := range scan.DuplicatesMap() {
+        additional[hash] = files[1:]
+    }
+
+    return additional
+}
+
+func (scan *Scan) AdditionalFiles() FileList {
+    var additionalFiles FileList
+
+    for _, files := range scan.AdditionalFilesMap() {
+        additionalFiles = append(additionalFiles, files...)
+    }
+
+    return additionalFiles
 }
 
 func (scan *Scan) TotalFilesSize() int64 {
@@ -203,9 +248,10 @@ func (scan *Scan) TotalFilesSize() int64 {
 func (scan *Scan) DuplicatesSize() int64 {
     var size int64
 
-    //Sum file sizes of duplicates (excluding 1 file per group)
-    for _, files := range scan.DuplicatesMap() {
-        duplicatesCount := len(files) - 1 //5 identical files = 4 duplicates
+    //Sum file sizes of additional files (duplicates - 1 per group)
+    //5 identical files (in group) = 4 additional files
+    for _, files := range scan.AdditionalFilesMap() {
+        duplicatesCount := len(files)
         var duplicatesSize int64
         duplicatesSize = files[0].Size * int64(duplicatesCount)
         size += duplicatesSize
