@@ -18,16 +18,33 @@ func main() {
         fmt.Printf("\t%s [OPTION]... DIRECTORY\n", os.Args[0])
         fmt.Printf("\n")
         flag.PrintDefaults()
+        fmt.Printf("\n")
+        fmt.Printf("DupeFinder will first scan the specified directory. This process will take a long time. Unless a map file is provided, all files will be hashed. It is highly recommended to create a map file (-export-map-file FILE) if you're going to scan the same directory again. A map file contains the scan results, which can be imported (-import-map-file FILE) to reuse those results rather than doing another full scan. That way, only new or changed files will be hashed, so the second scan should take much less time. However, the size and time of all files will still be compared during the superficial scan (sanity check).\n")
+        fmt.Printf("\n")
+        fmt.Printf("If you're running DupeFinder on the same exact directory again (using the same path argument as before), you have the option to skip the scan that would do a sanity check on the imported map data (-skip-scan). This will make the second run take even less time. It will immediately start removing duplicates if you've told it to do so. All the paths must be identical. If you're using a different directory path when specifying this option than you did when exporting the map, the program might delete the wrong files. If you're using this option to skip the scan, you should not have the program remove duplicate files unless you know what you are doing.\n")
+        fmt.Printf("If you've not specified an action, it will immediately print the summary. If you've specified a hash file to be created, it will merely copy the contents of the imported map.\n")
+        fmt.Printf("\n")
+        fmt.Printf("After the scan has completed, DupeFinder has a map in memory, representing the contents of the scanned directory. It will list all the duplicate groups, i.e., identical files (same hash) grouped together (-list-duplicate-groups). These groups are sorted by path (-sort-path), file name (-sort-name) or by modification time, newest first (-sort-time). If the program is told to get rid of the duplicates, it will keep the first file of each group.\n")
+        fmt.Printf("\n")
+        fmt.Printf("To delete duplicate files, use -delete-duplicates. Be careful. You should first run the program without this option and make sure that all additional files (all files except the first one in each group) can be deleted. Then run the program again, with -delete-duplicates. You should also export a map file the first time you run it and import it the second time to prevent it from scanning everything again.\n")
+        fmt.Printf("\n")
+        fmt.Printf("An alternative to deleting additional identical files is linking them together. This means that all but one file of each group are replaced with hardlinks pointing to the first file. This would reduce the space wasted by all those duplicates to zero (this number is shown in the summary), but the drawback is that all files per group would be affected if you later decide to change one of them because they all point to the same data. For archive systems or other kinds of collections with files that are never changed, this should be the ideal solution to save disk space.\n")
+        fmt.Printf("\n")
     }
 
     //Define arguments
     var mapFileImport string
-    flag.StringVar(&mapFileImport, "map-file-import", "", "map file to import")
+    flag.StringVar(&mapFileImport, "import-map-file", "", "map file to import, imported files won't be hashed (superficial scan)")
     var mapFileExport string
-    flag.StringVar(&mapFileExport, "map-file-export", "", "map file to export")
-    var mapFileReplace bool
-    flag.BoolVar(&mapFileReplace, "map-file-replace", false,
-        "replace file when exporting map")
+    flag.StringVar(&mapFileExport, "export-map-file", "", "map file to export")
+    var exportFileReplace bool
+    flag.BoolVar(&exportFileReplace, "file-replace", false,
+        "replace file when exporting file")
+    var hashMD5FileExport string
+    flag.StringVar(&hashMD5FileExport, "export-md5sums-file", "", "export MD5SUMS file")
+    var skipScan bool
+    flag.BoolVar(&skipScan, "skip-scan", false,
+        "skip scan when map is provided instead of doing superficial scan")
     var listDuplicateGroups bool
     flag.BoolVar(&listDuplicateGroups, "list-duplicate-groups", true,
         "list duplicate groups")
@@ -36,7 +53,7 @@ func main() {
         "show summary of found duplicates")
     var deleteDuplicates bool
     flag.BoolVar(&deleteDuplicates, "delete-duplicates", false,
-        "delete duplicates (keep one file per group)")
+        "delete duplicates (keep first file per group)")
     var linkDuplicates bool
     flag.BoolVar(&linkDuplicates, "link-duplicates", false,
         "replace duplicates with hardlinks")
@@ -102,6 +119,34 @@ func main() {
         os.Exit(1)
     }
 
+    //Check for file conflict (map file)
+    if mapFileExport != "" {
+        //User wants to create a map file
+        if _, err := os.Stat(mapFileExport); err == nil {
+            //Specified file already exists
+            if !exportFileReplace {
+                //User didn't confirm that file should be replaced
+                fmt.Fprintf(os.Stderr,
+                    "Not exporting map file, file exists, use -file-replace to override: %s\n", mapFileExport)
+                mapFileExport = ""
+                os.Exit(1)
+            }
+        }
+    }
+    if hashMD5FileExport != "" {
+        //User wants to export a hash file
+        if _, err := os.Stat(hashMD5FileExport); err == nil {
+            //Specified file already exists
+            if !exportFileReplace {
+                //User didn't confirm that file should be replaced
+                fmt.Fprintf(os.Stderr,
+                    "Not exporting hash file, file exists, use -file-replace to override: %s\n", hashMD5FileExport)
+                hashMD5FileExport = ""
+                os.Exit(1)
+            }
+        }
+    }
+
     //Import file map
     if mapFileImport != "" {
         if _, err := os.Stat(mapFileImport); err != nil {
@@ -117,7 +162,9 @@ func main() {
     }
 
     //Start scan
-    {
+    if (skipScan) {
+        fmt.Println("Skipping scan")
+    } else {
         wait.Add(1)
         line := "Scanning..."
         fmt.Fprintf(os.Stderr, line)
@@ -135,22 +182,22 @@ func main() {
     }
 
     //Export file map
-    if mapFileReplace && mapFileExport == "" {
+    if exportFileReplace && mapFileExport == "" {
         mapFileExport = mapFileImport
-    }
-    if mapFileExport != "" {
-        if _, err := os.Stat(mapFileExport); err == nil {
-            if !mapFileReplace {
-                fmt.Fprintf(os.Stderr,
-                    "Map file exists, not exporting: %s\n", mapFileExport)
-                mapFileExport = ""
-            }
-        }
     }
     if mapFileExport != "" {
         if err := scan.ExportMap(mapFileExport); err != nil {
             fmt.Fprintf(os.Stderr,
                 "Error exporting map: %s\n", err.Error())
+            os.Exit(1)
+        }
+    }
+
+    //Export hash file
+    if hashMD5FileExport != "" {
+        if err := scan.ExportMD5(hashMD5FileExport); err != nil {
+            fmt.Fprintf(os.Stderr,
+                "Error exporting hash file: %s\n", err.Error())
             os.Exit(1)
         }
     }

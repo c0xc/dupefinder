@@ -8,6 +8,7 @@ import (
     "sort"
     "path/filepath"
     "encoding/json"
+    "fmt"
 )
 
 type Scan struct {
@@ -52,6 +53,40 @@ func (scan *Scan) ExportMap(file string) error {
 
     //Write file
     if err := ioutil.WriteFile(file, json, 0644); err != nil {
+        return err
+    }
+
+    return nil
+}
+
+func (scan *Scan) ExportMD5(file string) error {
+    //Export hash file
+    f, err := os.Create(file)
+    defer f.Close()
+    if err != nil {
+        return err
+    }
+
+    //Go thru files and get MD5 hash
+    for _, file := range scan.Files {
+        if file.RelativePath == "" {
+            err := fmt.Errorf("no data generated for file, run scan")
+            return err
+        }
+        if file.MD5 == "" {
+            err := fmt.Errorf("no md5 hash generated for file: %s",
+                file.RelativePath)
+            return err
+        }
+        hashLine := file.MD5 + "  " + file.RelativePath
+        _, err := f.WriteString(hashLine + "\n")
+        if err != nil {
+            return err
+        }
+    }
+
+    //Sync/flush
+    if err := f.Sync(); err != nil {
         return err
     }
 
@@ -136,9 +171,12 @@ func (scan *Scan) scanFile(file string, fi os.FileInfo) error {
 
     //Check for old file object
     oldFile, found := scan.Files[fullPath]
-    if found {
-        if newFile.LooksIdentical(oldFile) && oldFile.IsHashed() {
-            //Skip
+    if found && oldFile.IsHashed() {
+        //File already in map, probably imported
+        //Stat file, check size and time
+        probablyIdentical := newFile.LooksIdentical(oldFile)
+        if probablyIdentical {
+            //Don't rescan file, keep it in map
             return nil
         }
     }
@@ -188,10 +226,11 @@ func (scan *Scan) BuildHashFilesMap() map[string]Files {
 func (scan *Scan) DuplicatesMap() map[string]FileList {
     duplicates := make(map[string]FileList)
 
-    //Go through hash map
+    //Go through hash map (files grouped by hash)
+    //Create map of duplicates, grouped by hash
     var addedInums []uint64
     for hash, files := range scan.HashFilesMap {
-        fileList := files.Files
+        fileList := files.Files //files with same hash
         var duplicateFiles FileList
 
         //Skip empty files
