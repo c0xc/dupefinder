@@ -7,8 +7,11 @@ import (
     "sync"
     "sort"
     "path/filepath"
-    "encoding/json"
     "fmt"
+    "strconv"
+    "encoding/json"
+
+    "github.com/buger/jsonparser"
 )
 
 type Scan struct {
@@ -34,8 +37,63 @@ func (scan *Scan) ImportMap(file string) error {
     }
 
     //Import map
-    if err := json.Unmarshal(raw, &scan.Files); err != nil {
-        return err
+    var parseError error
+    var importedFile *File
+    jsonparser.ObjectEach(raw, func(key []byte, json []byte, dataType jsonparser.ValueType, offset int) error {
+        //Parse file struct
+        file := string(key)
+        importedFile = &File{}
+        paths := [][]string{
+            []string{"Path"},
+            []string{"RelativePath"},
+            []string{"Name"},
+            []string{"Size"},
+            []string{"ModificationTime"},
+            []string{"MD5"},
+            []string{"SHA1"},
+        }
+        jsonparser.EachKey(json, func(idx int, value []byte, vt jsonparser.ValueType, err error) {
+            switch idx {
+            case 0:
+                importedFile.Path = string(value)
+            case 1:
+                importedFile.RelativePath = string(value)
+            case 2:
+                importedFile.Name = string(value)
+            case 3:
+                if number, err := strconv.ParseInt(string(value), 10, 64); err == nil {
+                    importedFile.Size = number
+                }
+            case 4:
+                if number, err := strconv.ParseInt(string(value), 10, 64); err == nil {
+                    importedFile.ModificationTime = number
+                }
+            case 5:
+                importedFile.MD5 = string(value)
+            case 6:
+                importedFile.SHA1 = string(value)
+            }
+        }, paths...)
+
+        //Check fields
+        if importedFile.Path == "" || importedFile.RelativePath == "" {
+            parseError = fmt.Errorf("path missing (%s)", file)
+        }
+        if importedFile.Name == "" {
+            parseError = fmt.Errorf("name missing (%s)", file)
+        }
+
+        //Add imported file to map
+        if parseError == nil {
+            scan.Files[file] = importedFile
+        }
+
+        return nil
+    })
+
+    //Check for error
+    if parseError != nil {
+        return parseError
     }
 
     //Build hash files map
@@ -45,14 +103,16 @@ func (scan *Scan) ImportMap(file string) error {
 }
 
 func (scan *Scan) ExportMap(file string) error {
-    //Export map
-    json, err := json.Marshal(&scan.Files)
+    //Export map to file
+    f, err := os.Create(file)
+    defer f.Close()
     if err != nil {
         return err
     }
 
-    //Write file
-    if err := ioutil.WriteFile(file, json, 0644); err != nil {
+    //Encode map
+    encoder := json.NewEncoder(f)
+    if err := encoder.Encode(&scan.Files); err != nil {
         return err
     }
 
