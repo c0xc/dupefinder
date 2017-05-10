@@ -3,15 +3,12 @@ package main
 import (
     "os"
     "syscall"
-    "io/ioutil"
     "sync"
     "sort"
     "path/filepath"
     "fmt"
-    "strconv"
     "encoding/json"
-
-    "github.com/buger/jsonparser"
+    "bufio"
 )
 
 type Scan struct {
@@ -30,70 +27,67 @@ func NewScan() *Scan {
 }
 
 func (scan *Scan) ImportMap(file string) error {
-    //Read file
-    raw, err := ioutil.ReadFile(file)
+    //Open file
+    f, err := os.Open(file)
+    defer f.Close()
     if err != nil {
         return err
     }
 
-    //Import map
-    var parseError error
-    var importedFile *File
-    jsonparser.ObjectEach(raw, func(key []byte, json []byte, dataType jsonparser.ValueType, offset int) error {
-        //Parse file struct
-        file := string(key)
-        importedFile = &File{}
-        paths := [][]string{
-            []string{"Path"},
-            []string{"RelativePath"},
-            []string{"Name"},
-            []string{"Size"},
-            []string{"ModificationTime"},
-            []string{"MD5"},
-            []string{"SHA1"},
+    //Decoder
+    decoder := json.NewDecoder(f)
+
+    //Format
+    r := bufio.NewReader(f)
+    var isFormatMap bool
+    if c, _, err := r.ReadRune(); err == nil {
+        if c == '{' {
+            isFormatMap = true
         }
-        jsonparser.EachKey(json, func(idx int, value []byte, vt jsonparser.ValueType, err error) {
-            switch idx {
-            case 0:
-                importedFile.Path = string(value)
-            case 1:
-                importedFile.RelativePath = string(value)
-            case 2:
-                importedFile.Name = string(value)
-            case 3:
-                if number, err := strconv.ParseInt(string(value), 10, 64); err == nil {
-                    importedFile.Size = number
-                }
-            case 4:
-                if number, err := strconv.ParseInt(string(value), 10, 64); err == nil {
-                    importedFile.ModificationTime = number
-                }
-            case 5:
-                importedFile.MD5 = string(value)
-            case 6:
-                importedFile.SHA1 = string(value)
-            }
-        }, paths...)
+    } else {
+        return err
+    }
+    f.Seek(0, 0)
+
+    //Try to import map directly (alternative format: dict instead of array)
+    if isFormatMap {
+        if err := decoder.Decode(&scan.Files); err != nil {
+            return err
+        }
+
+        //Build hash files map
+        scan.BuildHashFilesMap()
+
+        return nil
+    }
+
+    //Opening bracket
+    if _, err := decoder.Token(); err != nil {
+        return err
+    }
+
+    //Parsing each file object
+    for decoder.More() {
+        importedFile := &File{}
+        if err := decoder.Decode(&importedFile); err != nil {
+            return err
+        }
 
         //Check fields
         if importedFile.Path == "" || importedFile.RelativePath == "" {
-            parseError = fmt.Errorf("path missing (%s)", file)
+            return fmt.Errorf("path missing (%s)", file)
         }
         if importedFile.Name == "" {
-            parseError = fmt.Errorf("name missing (%s)", file)
+            return fmt.Errorf("name missing (%s)", file)
         }
 
-        //Add imported file to map
-        if parseError == nil {
-            scan.Files[file] = importedFile
-        }
+        //Add file to map
+        scan.Files[importedFile.Path] = importedFile
+    }
 
-        return nil
-    })
-
-    //Check for error
-    if parseError != nil {
-        return parseError
+    //Closing bracket
+    if _, err := decoder.Token(); err != nil {
+        return err
     }
 
     //Build hash files map
@@ -110,9 +104,17 @@ func (scan *Scan) ExportMap(file string) error {
         return err
     }
 
+    //Array of File objects
+    files := make(FileList, len(scan.Files))
+    index := 0
+    for _, file := range scan.Files {
+        files[index] = file
+        index++
+    }
+
     //Encode map
     encoder := json.NewEncoder(f)
-    if err := encoder.Encode(&scan.Files); err != nil {
+    if err := encoder.Encode(files); err != nil {
         return err
     }
 
