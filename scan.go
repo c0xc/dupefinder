@@ -40,9 +40,12 @@ func (scan *Scan) ImportMap(file string) error {
     //Format
     r := bufio.NewReader(f)
     var isFormatMap bool
+    var isFormatArray bool
     if c, _, err := r.ReadRune(); err == nil {
         if c == '{' {
             isFormatMap = true
+        } else if c == '[' {
+            isFormatArray = true
         }
     } else {
         return err
@@ -51,8 +54,24 @@ func (scan *Scan) ImportMap(file string) error {
 
     //Try to import map directly (alternative format: dict instead of array)
     if isFormatMap {
-        if err := decoder.Decode(&scan.Files); err != nil {
+        //Parse hash map
+        var importedMap FileMap
+        if err := decoder.Decode(&importedMap); err != nil {
             return err
+        }
+
+        //Ignore hash keys, collect file structs
+        for _, importedFile := range importedMap {
+            //Check fields
+            if importedFile.FullPath == "" || importedFile.Path == "" {
+                return fmt.Errorf("path field missing (%s)", file)
+            }
+            if importedFile.Name == "" {
+                return fmt.Errorf("name field missing (%s)", file)
+            }
+
+            //Add file to map
+            scan.Files[importedFile.Path] = importedFile
         }
 
         //Build hash files map
@@ -61,12 +80,17 @@ func (scan *Scan) ImportMap(file string) error {
         return nil
     }
 
+    //Expect array format
+    if !isFormatArray {
+        return fmt.Errorf("invalid map format")
+    }
+
     //Opening bracket
     if _, err := decoder.Token(); err != nil {
         return err
     }
 
-    //Parsing each file object
+    //Parse each file object
     for decoder.More() {
         importedFile := &File{}
         if err := decoder.Decode(&importedFile); err != nil {
@@ -74,11 +98,11 @@ func (scan *Scan) ImportMap(file string) error {
         }
 
         //Check fields
-        if importedFile.Path == "" || importedFile.RelativePath == "" {
-            return fmt.Errorf("path missing (%s)", file)
+        if importedFile.FullPath == "" || importedFile.Path == "" {
+            return fmt.Errorf("path field missing (%s)", file)
         }
         if importedFile.Name == "" {
-            return fmt.Errorf("name missing (%s)", file)
+            return fmt.Errorf("name field missing (%s)", file)
         }
 
         //Add file to map
@@ -131,16 +155,16 @@ func (scan *Scan) ExportMD5(file string) error {
 
     //Go thru files and get MD5 hash
     for _, file := range scan.Files {
-        if file.RelativePath == "" {
+        if file.Path == "" {
             err := fmt.Errorf("no data generated for file, run scan")
             return err
         }
         if file.MD5 == "" {
             err := fmt.Errorf("no md5 hash generated for file: %s",
-                file.RelativePath)
+                file.Path)
             return err
         }
-        hashLine := file.MD5 + "  " + file.RelativePath
+        hashLine := file.MD5 + "  " + file.Path
         _, err := f.WriteString(hashLine + "\n")
         if err != nil {
             return err
@@ -220,8 +244,8 @@ func (scan *Scan) scanFile(file string, fi os.FileInfo) error {
     if err != nil {
         return err
     }
-    newFile := &File{ RelativePath: file }
-    newFile.Path = fullPath
+    newFile := &File{ Path: file }
+    newFile.FullPath = fullPath
     newFile.Name = fi.Name()
     newFile.Size = fi.Size()
     newFile.ModificationTime = fi.ModTime().Unix()
@@ -232,24 +256,28 @@ func (scan *Scan) scanFile(file string, fi os.FileInfo) error {
     }
 
     //Check for old file object
-    oldFile, found := scan.Files[fullPath]
+    oldFile, found := scan.Files[newFile.Path]
     if found && oldFile.IsHashed() {
         //File already in map, probably imported
         //Stat file, check size and time
         probablyIdentical := newFile.LooksIdentical(oldFile)
         if probablyIdentical {
-            //Don't rescan file, keep it in map
-            return nil
+            //File already in map (imported)
+            //Mtime unchanged, so content assumed to be unchanged as well
+            newFile.MD5 = oldFile.MD5
+            newFile.SHA1 = oldFile.SHA1
         }
     }
 
-    //Hash
-    if err := newFile.Hash(); err != nil {
-        return err
+    //Calculate hash (slow!) unless imported
+    if !newFile.IsHashed() {
+        if err := newFile.Hash(); err != nil {
+            return err
+        }
     }
 
     //Add to map
-    scan.Files[fullPath] = newFile
+    scan.Files[newFile.Path] = newFile
 
     return nil
 }

@@ -69,6 +69,22 @@ func main() {
     var sortTime bool
     flag.BoolVar(&sortTime, "sort-time", false,
         "sort duplicate groups by file time")
+    var useFullPath bool
+    flag.BoolVar(&useFullPath, "use-full-path", false,
+        "use absolute instead of relative path for scanned files")
+
+    //Helper for file path
+    //File paths should be relative, so that a mounted network share
+    //can be scanned using a map file created on the remote host.
+    filePath := func(file *File) string {
+        var path string
+        if useFullPath {
+            path = file.FullPath
+        } else {
+            path = file.Path
+        }
+        return path
+    }
 
     //Parse arguments
     flag.Parse()
@@ -207,7 +223,7 @@ func main() {
     if listDuplicateGroups {
         for _, files := range duplicatesMap {
             for _, file := range files {
-                fmt.Printf("%s\n", file.Path)
+                fmt.Printf("%s\n", filePath(file))
             }
             fmt.Printf("\n")
         }
@@ -238,13 +254,14 @@ func main() {
         for _, files := range duplicatesMap {
             duplicates := files[1:] //except first one
             for _, file := range duplicates {
-                err := os.Remove(file.Path)
+                path := filePath(file)
+                err := os.Remove(path)
                 if err != nil {
                     fmt.Fprintf(os.Stderr,
-                        "Error deleting file %s: %s\n", file.Path, err.Error())
+                        "Error deleting file %s: %s\n", path, err.Error())
                     continue
                 }
-                fmt.Printf("Deleted %s\n", file.Path)
+                fmt.Printf("Deleted %s\n", path)
             }
         }
     } else if linkDuplicates {
@@ -257,7 +274,9 @@ func main() {
             for _, file := range duplicates {
                 //Create hardlink in destination directory
                 //Replace duplicate only if hardlink created successfully
-                dir := filepath.Dir(file.Path)
+                duplicateFilePath := filePath(file)
+                firstFilePath := filePath(firstFile)
+                dir := filepath.Dir(duplicateFilePath) //hardlink directory
                 prefix := "DUPE"
                 f, err := ioutil.TempFile(dir, prefix)
                 if err != nil {
@@ -269,19 +288,24 @@ func main() {
                 tmpFilePath := f.Name()
                 f.Close()
                 os.Remove(tmpFilePath)
-                if err := os.Link(firstFile.Path, tmpFilePath); err != nil {
+
+                //Create hardlink using temporary (new) file
+                //Fails if duplicate is on another filesystem
+                if err := os.Link(firstFilePath, tmpFilePath); err != nil {
                     fmt.Fprintf(os.Stderr,
                         "Error creating link: %s\n",
                         err.Error())
                     continue
                 }
-                if err := os.Rename(tmpFilePath, file.Path); err != nil {
+
+                //Replace duplicate with link
+                if err := os.Rename(tmpFilePath, duplicateFilePath); err != nil {
                     fmt.Fprintf(os.Stderr,
                         "Error replacing file %s with link: %s\n",
-                        file.Path, err.Error())
+                        duplicateFilePath, err.Error())
                     continue
                 }
-                fmt.Printf("Replaced %s\n", file.Path)
+                fmt.Printf("Replaced %s\n", duplicateFilePath)
             }
         }
     }

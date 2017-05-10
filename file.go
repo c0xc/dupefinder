@@ -10,7 +10,7 @@ import (
 
 type File struct {
     Path string
-    RelativePath string
+    FullPath string
     Name string
     Size int64
     ModificationTime int64
