@@ -28,6 +28,7 @@ func NewScan() *Scan {
 
 func (scan *Scan) ImportMap(file string) error {
     //Open file
+    fmt.Fprintf(verboseIO, "Importing map from file: %s\n", file)
     f, err := os.Open(file)
     defer f.Close()
     if err != nil {
@@ -48,6 +49,7 @@ func (scan *Scan) ImportMap(file string) error {
             isFormatArray = true
         }
     } else {
+        fmt.Fprintf(verboseIO, "Format error\n")
         return err
     }
     f.Seek(0, 0)
@@ -55,6 +57,7 @@ func (scan *Scan) ImportMap(file string) error {
     //Try to import map directly (alternative format: dict instead of array)
     if isFormatMap {
         //Parse hash map
+        fmt.Fprintf(verboseIO, "Importing full map\n")
         var importedMap FileMap
         if err := decoder.Decode(&importedMap); err != nil {
             return err
@@ -84,6 +87,7 @@ func (scan *Scan) ImportMap(file string) error {
     if !isFormatArray {
         return fmt.Errorf("invalid map format")
     }
+    fmt.Fprintf(verboseIO, "Importing file objects from map file\n")
 
     //Opening bracket
     if _, err := decoder.Token(); err != nil {
@@ -122,6 +126,7 @@ func (scan *Scan) ImportMap(file string) error {
 
 func (scan *Scan) ExportMap(file string) error {
     //Export map to file
+    fmt.Fprintf(verboseIO, "Exporting map to file: %s\n", file)
     f, err := os.Create(file)
     defer f.Close()
     if err != nil {
@@ -141,12 +146,14 @@ func (scan *Scan) ExportMap(file string) error {
     if err := encoder.Encode(files); err != nil {
         return err
     }
+    fmt.Fprintf(verboseIO, "Done exporting map\n")
 
     return nil
 }
 
 func (scan *Scan) ExportMD5(file string) error {
     //Export hash file
+    fmt.Fprintf(verboseIO, "Exporting MD5SUMS file: %s\n", file)
     f, err := os.Create(file)
     defer f.Close()
     if err != nil {
@@ -183,12 +190,14 @@ func (scan *Scan) Clean() FileList {
     var removedFiles FileList
 
     //Remove file objects that point to non-existent files
+    fmt.Fprintf(verboseIO, "Cleaning file list (%d)...\n", len(scan.Files))
     for path, file := range scan.Files {
         if !file.Exists() {
             delete(scan.Files, path)
             removedFiles = append(removedFiles, file)
         }
     }
+    fmt.Fprintf(verboseIO, "Done cleaning file list (%d removed)\n", len(removedFiles))
 
     //Rebuild hash files map
     scan.BuildHashFilesMap()
@@ -206,6 +215,7 @@ func (scan *Scan) Scan(wait *sync.WaitGroup) {
         //Scan search path recursively
         for _, path := range scan.Paths {
             //Search path (base)
+            fmt.Fprintf(verboseIO, "Scanning %s ...\n", path)
             filepath.Walk(path, func(file string, fi os.FileInfo, err error) error {
                 //Check for error
                 if err != nil {
@@ -254,6 +264,7 @@ func (scan *Scan) scanFile(file string, fi os.FileInfo) error {
     if stat, ok := fi.Sys().(*syscall.Stat_t); ok {
         newFile.Inum = uint64(stat.Ino)
     }
+    fmt.Fprintf(verboseIO, "FILE: %s\n", file)
 
     //Check for old file object
     oldFile, found := scan.Files[newFile.Path]
@@ -266,11 +277,13 @@ func (scan *Scan) scanFile(file string, fi os.FileInfo) error {
             //Mtime unchanged, so content assumed to be unchanged as well
             newFile.MD5 = oldFile.MD5
             newFile.SHA1 = oldFile.SHA1
+            fmt.Fprintf(verboseIO, "File already in map: %s\n", file)
         }
     }
 
     //Calculate hash (slow!) unless imported
     if !newFile.IsHashed() {
+        fmt.Fprintf(verboseIO, "Hashing file: %s\n", file)
         if err := newFile.Hash(); err != nil {
             return err
         }

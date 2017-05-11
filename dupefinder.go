@@ -6,10 +6,14 @@ import (
     "flag"
     "sync"
     "path/filepath"
+    "io"
     "io/ioutil"
+    "bytes"
 
     "github.com/dustin/go-humanize"
 )
+
+var verboseIO io.Writer
 
 func main() {
     //Usage
@@ -72,6 +76,22 @@ func main() {
     var useFullPath bool
     flag.BoolVar(&useFullPath, "use-full-path", false,
         "use absolute instead of relative path for scanned files")
+    var verboseMode bool
+    flag.BoolVar(&verboseMode, "verbose", false,
+        "verbose output")
+
+    //Parse arguments
+    flag.Parse()
+    if flag.NArg() == 0 {
+        flag.Usage()
+        os.Exit(0)
+    }
+
+    //Verbose output
+    verboseIO = bytes.NewBufferString("")
+    if verboseMode {
+        verboseIO = os.Stderr
+    }
 
     //Helper for file path
     //File paths should be relative, so that a mounted network share
@@ -84,13 +104,6 @@ func main() {
             path = file.Path
         }
         return path
-    }
-
-    //Parse arguments
-    flag.Parse()
-    if flag.NArg() == 0 {
-        flag.Usage()
-        os.Exit(0)
     }
 
     //Wait lock
@@ -182,19 +195,10 @@ func main() {
         fmt.Println("Skipping scan")
     } else {
         wait.Add(1)
-        line := "Scanning..."
-        fmt.Fprintf(os.Stderr, line)
+        fmt.Fprintf(os.Stderr, "Scanning...\n")
+        fmt.Fprintf(os.Stderr, "\n")
         scan.Scan(&wait)
         wait.Wait()
-        for i := 0; i < len(line); i++ {
-            fmt.Fprintf(os.Stderr, "\b")
-        }
-        for i := 0; i < len(line); i++ {
-            fmt.Fprintf(os.Stderr, " ")
-        }
-        for i := 0; i < len(line); i++ {
-            fmt.Fprintf(os.Stderr, "\b")
-        }
     }
 
     //Export file map
