@@ -11,18 +11,18 @@ Build
 
 Use the standard commands provided by the Go toolset.
 
-    $ go get github.com/c0xc/DupeFinder
+    $ go get github.com/c0xc/dupefinder
 
-`DupeFinder` should then be in your `$GOPATH`.
+`dupefinder` should then be in your `$GOPATH`.
 
 If you want to use DupeFinder on another operating system, say,
 on FreeBSD (for example, if you have an HP MicroServer as NAS box),
 you can simply cross compile it:
 
-    $ git clone https://github.com/c0xc/DupeFinder.git
-    $ cd DupeFinder
+    $ git clone https://github.com/c0xc/dupefinder.git
+    $ cd dupefinder
     $ GOOS=freebsd go build
-    $ file DupeFinder
+    $ file dupefinder
     dupefinder: ELF 64-bit LSB executable, x86-64, version 1 (FreeBSD), statically linked, not stripped
 
 
