@@ -33,7 +33,7 @@ func main() {
         fmt.Printf("\n")
         fmt.Printf("To delete duplicate files, use -delete-duplicates. Be careful. You should first run the program without this option and make sure that all additional files (all files except the first one in each group) can be deleted. Then run the program again, with -delete-duplicates. You should also export a map file the first time you run it and import it the second time to prevent it from scanning everything again.\n")
         fmt.Printf("\n")
-        fmt.Printf("An alternative to deleting additional identical files is linking them together. This means that all but one file of each group are replaced with hardlinks pointing to the first file. This would reduce the space wasted by all those duplicates to zero (this number is shown in the summary), but the drawback is that all files in the group would be affected if you later decide to change one of them because they all point to the same data. For archive systems or other kinds of collections with files that are never changed, this should be the ideal solution to save disk space.\n")
+        fmt.Printf("An alternative to deleting additional identical files is linking them together. This means that all but one file of each group are replaced with hardlinks pointing to the first file. This would reduce the space wasted by all those duplicates to zero (this number is shown in the summary), but the drawback is that all files in the group would be affected if you later decide to change one of them, because they all point to the same data. For archive systems or other kinds of collections with files that are never changed, this should be the ideal solution to save disk space.\n")
         fmt.Printf("\n")
     }
 

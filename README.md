@@ -6,6 +6,27 @@ This is a simple cli tool for finding duplicates.
 Duplicates are files with the same content, i.e.,
 files with matching checksums (MD5).
 
+Build
+-----
+
+Use the standard commands provided by the Go toolset.
+
+    $ go get github.com/c0xc/DupeFinder
+
+`DupeFinder` should then be in your `$GOPATH`.
+
+If you want to use DupeFinder on another operating system, say,
+on FreeBSD (for example, if you have an HP MicroServer as NAS box),
+you can simply cross compile it:
+
+    $ git clone https://github.com/c0xc/DupeFinder.git
+    $ cd DupeFinder
+    $ GOOS=freebsd go build
+    $ file DupeFinder
+    dupefinder: ELF 64-bit LSB executable, x86-64, version 1 (FreeBSD), statically linked, not stripped
+
+
+
 Map files
 ---------
 
@@ -35,7 +56,7 @@ Here is a simple example with 5 files:
     7835626 -rw-r--r-- 1 users 12 May 12 15:52 'other directory/foo'
     7835600 -rw-r--r-- 1 users 12 May 12 15:51 'some directory/file1'
 
-Change into that directory and run DupeFinder on the current directory (".").
+Change into that directory and run DupeFinder on the current directory (`.`).
 By default, DupeFinder shows duplicates in groups, in alphabetical order.
 
     $ ~/bin/dupefinder .
