@@ -9,6 +9,7 @@ import (
     "io"
     "io/ioutil"
     "bytes"
+    "runtime"
 
     "github.com/dustin/go-humanize"
 )
@@ -79,6 +80,9 @@ func main() {
     var verboseMode bool
     flag.BoolVar(&verboseMode, "verbose", false,
         "verbose output")
+    var workerCount int
+    flag.IntVar(&workerCount, "worker-count", runtime.NumCPU(),
+        "number of scan workers, how many files to process in parallel")
 
     //Parse arguments
     flag.Parse()
@@ -121,6 +125,7 @@ func main() {
         scan.SortOrder = 3
     }
     scan.SortReversed = sortReversed
+    scan.WorkerCount = workerCount
 
     //Search path
     for _, path := range flag.Args() {

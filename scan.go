@@ -11,12 +11,18 @@ import (
     "bufio"
 )
 
+type FilePathInfo struct {
+    file string
+    fi os.FileInfo
+}
+
 type Scan struct {
     Paths []string
     Files FileMap
     HashFilesMap map[string]Files
     SortOrder int
     SortReversed bool
+    WorkerCount int
 }
 
 func NewScan() *Scan {
@@ -57,7 +63,7 @@ func (scan *Scan) ImportMap(file string) error {
     //Try to import map directly (alternative format: dict instead of array)
     if isFormatMap {
         //Parse hash map
-        fmt.Fprintf(verboseIO, "Importing full map\n")
+        fmt.Fprintf(verboseIO, "Importing full map...\n")
         var importedMap FileMap
         if err := decoder.Decode(&importedMap); err != nil {
             return err
@@ -67,10 +73,10 @@ func (scan *Scan) ImportMap(file string) error {
         for _, importedFile := range importedMap {
             //Check fields
             if importedFile.FullPath == "" || importedFile.Path == "" {
-                return fmt.Errorf("path field missing (%s)", file)
+                return fmt.Errorf("Path field missing (%s)", file)
             }
             if importedFile.Name == "" {
-                return fmt.Errorf("name field missing (%s)", file)
+                return fmt.Errorf("Name field missing (%s)", file)
             }
 
             //Add file to map
@@ -85,9 +91,9 @@ func (scan *Scan) ImportMap(file string) error {
 
     //Expect array format
     if !isFormatArray {
-        return fmt.Errorf("invalid map format")
+        return fmt.Errorf("Invalid map format")
     }
-    fmt.Fprintf(verboseIO, "Importing file objects from map file\n")
+    fmt.Fprintf(verboseIO, "Importing file objects from map file...\n")
 
     //Opening bracket
     if _, err := decoder.Token(); err != nil {
@@ -103,10 +109,10 @@ func (scan *Scan) ImportMap(file string) error {
 
         //Check fields
         if importedFile.FullPath == "" || importedFile.Path == "" {
-            return fmt.Errorf("path field missing (%s)", file)
+            return fmt.Errorf("Path field missing (%s)", file)
         }
         if importedFile.Name == "" {
-            return fmt.Errorf("name field missing (%s)", file)
+            return fmt.Errorf("Name field missing (%s)", file)
         }
 
         //Add file to map
@@ -163,11 +169,11 @@ func (scan *Scan) ExportMD5(file string) error {
     //Go thru files and get MD5 hash
     for _, file := range scan.Files {
         if file.Path == "" {
-            err := fmt.Errorf("no data generated for file, run scan")
+            err := fmt.Errorf("No data generated for file, run scan")
             return err
         }
         if file.MD5 == "" {
-            err := fmt.Errorf("no md5 hash generated for file: %s",
+            err := fmt.Errorf("No md5 hash generated for file: %s",
                 file.Path)
             return err
         }
@@ -191,11 +197,17 @@ func (scan *Scan) Clean() FileList {
 
     //Remove file objects that point to non-existent files
     fmt.Fprintf(verboseIO, "Cleaning file list (%d)...\n", len(scan.Files))
+    i := 0 //index
+    ii := len(scan.Files) //count
     for path, file := range scan.Files {
         if !file.Exists() {
+            fmt.Fprintf(verboseIO, "[%d/%d] File not found: %s\n", i + 1, ii, path)
             delete(scan.Files, path)
             removedFiles = append(removedFiles, file)
+        } else {
+            fmt.Fprintf(verboseIO, "[%d/%d] File exists: %s\n", i + 1, ii, path)
         }
+        i++
     }
     fmt.Fprintf(verboseIO, "Done cleaning file list (%d removed)\n", len(removedFiles))
 
@@ -210,36 +222,89 @@ func (scan *Scan) Scan(wait *sync.WaitGroup) {
         defer wait.Done()
 
         //Remove non-existent files from list
+        //Some files may have been deleted after creating the imported map
         scan.Clean()
 
+        //Scan workers (responsible for hashing files)
+        workerCount := scan.WorkerCount
+        if workerCount == 0 {
+            workerCount = 1 //1 worker by default
+        }
+        foundFiles := make(chan FilePathInfo)
+        scannedFiles := make(chan *File)
+        for i := 0; i < workerCount; i++ {
+            go scan.scanFileWorker(foundFiles, scannedFiles)
+        }
+
+        //Collect scanned files (in the background)
+        //Received files not yet saved in map while workers read from map
+        var collectedFiles FileList //buffer for received files
+        foundCountSignal := make(chan int, 1) //scan complete signal
+        var wgDone sync.WaitGroup
+        wgDone.Add(1)
+        go func() {
+            var totalCount, receivedCount int
+            for {
+                select {
+                case count := <-foundCountSignal:
+                    //Filesystem scan complete, total file count now known
+                    totalCount = count
+                case scannedFile := <-scannedFiles:
+                    //Received file from worker
+                    receivedCount++
+                    collectedFiles = append(collectedFiles, scannedFile)
+                }
+                if receivedCount == totalCount {
+                    //Last file received
+                    break
+                }
+            }
+            wgDone.Done() //all files received
+        }()
+
         //Scan search path recursively
+        var count int //number of files
         for _, path := range scan.Paths {
             //Search path (base)
             fmt.Fprintf(verboseIO, "Scanning %s ...\n", path)
             filepath.Walk(path, func(file string, fi os.FileInfo, err error) error {
                 //Check for error
                 if err != nil {
-                    //Ignore errors (such as permission denied)
+                    //Handle error
                     if fi.IsDir() {
+                        //Skip directory on error (such as permission denied)
                         return filepath.SkipDir
                     } else {
-                        return err
+                        //Skip file on error (such as permission denied)
+                        return nil
                     }
                 }
 
                 //Directory
                 if fi.IsDir() {
-                    return err
+                    return nil //continue, descend into directory
                 }
 
                 //Regular file
-                //Skip symlinks, a symlink target might be deleted as duplicate
+                //Skip symlinks (a symlink target might be deleted as duplicate)
                 if fi.Mode().IsRegular() {
-                    scan.scanFile(file, fi)
+                    //Scan this file
+                    count++
+                    fpi := FilePathInfo{file, fi}
+                    foundFiles <- fpi //send it to workers
                 }
 
                 return nil
             })
+        }
+        close(foundFiles) //tell workers there are no more files
+        foundCountSignal <- count //total number of files to wait for
+        fmt.Fprintf(verboseIO, "Found %d files\n", count)
+
+        //Wait for results, put results in map (add or update)
+        wgDone.Wait() //wait for all workers
+        for _, file := range collectedFiles {
+            scan.Files[file.Path] = file
         }
 
         //Rebuild hash files map
@@ -248,11 +313,18 @@ func (scan *Scan) Scan(wait *sync.WaitGroup) {
     }()
 }
 
-func (scan *Scan) scanFile(file string, fi os.FileInfo) error {
+func (scan *Scan) scanFileWorker(foundFiles <-chan FilePathInfo, newFiles chan<- *File) {
+    for fpi := range foundFiles {
+        //Scan file (this worker is running in the background)
+        scan.scanFile(fpi.file, fpi.fi, newFiles)
+    }
+}
+
+func (scan *Scan) scanFile(file string, fi os.FileInfo, newFiles chan<- *File) {
     //New file object
     fullPath, err := filepath.Abs(file)
     if err != nil {
-        return err
+        return
     }
     newFile := &File{ Path: file }
     newFile.FullPath = fullPath
@@ -264,7 +336,7 @@ func (scan *Scan) scanFile(file string, fi os.FileInfo) error {
     if stat, ok := fi.Sys().(*syscall.Stat_t); ok {
         newFile.Inum = uint64(stat.Ino)
     }
-    fmt.Fprintf(verboseIO, "FILE: %s\n", file)
+    fmt.Fprintf(verboseIO, "File: %s\n", file)
 
     //Check for old file object
     oldFile, found := scan.Files[newFile.Path]
@@ -285,14 +357,12 @@ func (scan *Scan) scanFile(file string, fi os.FileInfo) error {
     if !newFile.IsHashed() {
         fmt.Fprintf(verboseIO, "Hashing file: %s\n", file)
         if err := newFile.Hash(); err != nil {
-            return err
+            return
         }
     }
 
-    //Add to map
-    scan.Files[newFile.Path] = newFile
-
-    return nil
+    //Return new file object
+    newFiles <- newFile
 }
 
 func (scan *Scan) BuildHashFilesMap() map[string]Files {
