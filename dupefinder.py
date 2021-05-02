@@ -267,18 +267,26 @@ def main():
         with open(args.export_map_file, "w") as file:
             file.write(dupefilemap.json())
 
-    # Print list of duplicate groups
+    # Go through list of duplicate groups
     duplicates_map = dupefilemap.duplicates_map()
     total_wasted_space = 0
+    replaced_files = 0
     for hash, list in duplicates_map.items():
         group_wasted_space = 0
         print("[%s]" % (hash))
         for i, file_info in enumerate(list):
+            cur_path = file_info["Path"]
             if i == 0:
-                print("* %s" % (file_info["Path"]))
+                print("* %s" % (cur_path))
+                src_path = cur_path
             else:
                 group_wasted_space += file_info["Size"]
-                print("- %s" % (file_info["Path"]))
+                print("- %s" % (cur_path))
+                if args.link_duplicates:
+                    print("    REPLACING #%s ..." % (file_info["Inum"]))
+                    os.remove(cur_path)
+                    os.link(src_path, cur_path)
+                    replaced_files += 1
         total_wasted_space += group_wasted_space
         print()
 
@@ -289,6 +297,7 @@ def main():
     print("Total size:\t\t%s B" % (total_files_size))
     print("Duplicate groups:\t%s" % (len(duplicates_map)))
     print("Total wasted space:\t%s B" % (total_wasted_space))
+    print("Replaced files:\t\t%s" % (replaced_files))
 
 
 if __name__ == '__main__':
