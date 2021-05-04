@@ -23,7 +23,7 @@ class DupeFileMap():
         self._old_hash_map = None
         opts = self._opts = {}
         opts["default-algorithm"] = "MD5"
-        for k, v in kwargs.get("opts", {}).items():
+        for k, v in kwargs.items():
             self._opts[k] = v
             if k == "old-map":
                 self.import_old_file(v)
@@ -102,11 +102,17 @@ class DupeFileMap():
             raise Exception("no file list, need to scan first")
         old_file_map = self._old_hash_map or {}
 
-        for file_data in file_list:
+        for file_data in file_list[:]:
             path = file_data["Path"]
             name = os.path.basename(path)
             if not os.path.isfile(path):
-                raise Exception("cannot hash invalid file path: " + path)
+                # File appears to have vanished
+                warning("file vanished before it could be hashed: " + path)
+                if self._opts.get("skip-vanished"):
+                    file_list.remove(file_data) # iterating over copy, above
+                    continue
+                else:
+                    raise Exception("file vanished before it could be hashed: " + path)
             old_file_data = old_file_map.get(path) # or undefined
             if not old_file_data:
                 for data in old_file_map.values():
@@ -174,8 +180,8 @@ class DupeFileMap():
             hash_algorithm = self._opts["algorithms"][0]
         for file_info in self.list():
             rel_path = file_info["Path"]
-            hash = file_info[hash_algorithm]
-            if not hash:
+            hash = file_info.get(hash_algorithm) # hash == required key
+            if hash is None:
                 raise Exception("missing %s hash in file info record" % (hash_algorithm))
             # Exclude file if empty
             if not file_info["Size"]:
@@ -221,6 +227,9 @@ def parse_args():
     argparser.add_argument("--link-duplicates", action="store_true",
         help="replace duplicates with hardlinks",
     )
+    argparser.add_argument("--skip-vanished", action="store_true",
+        help="skip files that vanished during the scan",
+    )
     argparser.add_argument("--debug", action="store_true",
         help="enable debug logging",
     )
@@ -244,7 +253,10 @@ def main():
 
     # Get started
     debug("Initiating scanner for selected directory: %s" % (dir))
-    dupefilemap = DupeFileMap(dir)
+    opts = {}
+    if args.skip_vanished:
+        opts["skip-vanished"] = True
+    dupefilemap = DupeFileMap(dir, **opts)
 
     # Import old map
     file_map = {}
