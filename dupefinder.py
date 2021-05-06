@@ -1,16 +1,33 @@
 #!/usr/bin/env python3
 
 import sys
+from sys import exit
 import os
 import os.path
 import json
 import hashlib
 import argparse
 import logging
+import contextlib
 from logging import debug, info, warning
 
 if sys.version_info < (3,4):
     raise SystemExit("Python < 3.4 not supported")
+
+
+@contextlib.contextmanager
+def file_open(filename=None, mode=''):
+    if filename and filename != '-':
+        fh = open(filename, mode)
+    else:
+        fh = sys.stdout
+
+    try:
+        yield fh
+    finally:
+        if fh is not sys.stdout:
+            fh.close()
+
 
 class DupeFileMap():
 
@@ -27,6 +44,24 @@ class DupeFileMap():
             self._opts[k] = v
             if k == "old-map":
                 self.import_old_file(v)
+
+        for user_algo in self.user_algorithms():
+            if user_algo not in self.algorithms():
+                raise Exception("unknown algorithm: %s" % (user_algo))
+
+    def algorithms(self, map=False):
+        algos = {
+            "MD5": hashlib.md5(),
+            "SHA1": hashlib.sha1(),
+            "SHA224": hashlib.sha224(),
+            "SHA256": hashlib.sha256(),
+            "SHA384": hashlib.sha384(),
+            "SHA512": hashlib.sha512(),
+        }
+        if map:
+            return algos
+        else:
+            return algos.keys()
 
     def import_old(self, old_hash_struct):
         old_map = {}
@@ -96,23 +131,40 @@ class DupeFileMap():
 
         return file_map
 
+    def user_algorithms(self):
+        user_algorithms = []
+        # ctor > opts > algorithms
+        user_algos = self._opts.get("algorithms", [])
+        if user_algos:
+            for user_algo in user_algos:
+                user_algorithms.append(user_algo)
+        return user_algorithms
+
+    def default_algorithm(self):
+        first_algorithm = self._opts["default-algorithm"]
+        if self.user_algorithms():
+            first_algorithm = self.user_algoriths()[0]
+        return first_algorithm
+
     def hash(self):
         file_list = self._file_list
         if file_list is None:
             raise Exception("no file list, need to scan first")
         old_file_map = self._old_hash_map or {}
+        self._files_with_imported_hash = []
 
         for file_data in file_list[:]:
             path = file_data["Path"]
             name = os.path.basename(path)
             if not os.path.isfile(path):
                 # File appears to have vanished
-                warning("file vanished before it could be hashed: " + path)
-                if self._opts.get("skip-vanished"):
+                if self._opts.get("ignore-vanished"):
+                    debug("file vanished before it could be hashed: " + path)
                     file_list.remove(file_data) # iterating over copy, above
                     continue
-                else:
+                elif self._opts.get("fatal-vanished"):
                     raise Exception("file vanished before it could be hashed: " + path)
+                warning("file vanished before it could be hashed: " + path)
             old_file_data = old_file_map.get(path) # or undefined
             if not old_file_data:
                 for data in old_file_map.values():
@@ -129,17 +181,15 @@ class DupeFileMap():
                 "SHA384": hashlib.sha384(),
                 "SHA512": hashlib.sha512(),
             }
-            if "algorithms" in self._opts:
+            if self.user_algorithms():
                 # ctor > opts > algorithms
-                user_algos = self._opts["algorithms"]
                 for a in list(algos.keys()):
-                    if a not in user_algos:
+                    if a not in self.user_algorithms(): # TODO optimize
                         del algos[a]
             else:
                 # Use default algorithm
-                default_algorithm = self._opts["default-algorithm"]
                 for a in list(algos.keys()):
-                    if a != default_algorithm:
+                    if a != self.default_algorithm():
                         del algos[a]
 
             # Get previously calculated hashes from old map
@@ -158,9 +208,15 @@ class DupeFileMap():
 
             # Calculate hashes
             with open(path, "rb") as f:
-                for chunk in iter(lambda: f.read(4096), b""):
-                    for a, hashobj in remaining_algos.items():
-                        hashobj.update(chunk)
+                if remaining_algos:
+                    debug("calculating hash sum(s) (%s) for: %s" % (",".join(remaining_algos.keys()), name))
+                    for chunk in iter(lambda: f.read(4096), b""):
+                        for a, hashobj in remaining_algos.items():
+                            hashobj.update(chunk)
+                else:
+                    debug("not recalculating hash: %s" % (name))
+                    self._files_with_imported_hash.append(path)
+
                 for a, hashobj in remaining_algos.items():
                     file_data[a] = hashobj.hexdigest()
 
@@ -173,11 +229,12 @@ class DupeFileMap():
     def map(self):
         return {x["Path"]:x for x in self.list()}
 
+    def imported_hashed_files(self):
+        return self._files_with_imported_hash.copy()
+
     def hash_map(self):
         hash_map = {}
-        hash_algorithm = self._opts["default-algorithm"]
-        if "algorithms" in self._opts:
-            hash_algorithm = self._opts["algorithms"][0]
+        hash_algorithm = self.default_algorithm()
         for file_info in self.list():
             rel_path = file_info["Path"]
             hash = file_info.get(hash_algorithm) # hash == required key
@@ -219,16 +276,47 @@ class DupeFileMap():
 def parse_args():
     argparser = argparse.ArgumentParser(description="Find duplicate files.")
     argparser.add_argument("--import-map-file",
-        help="map file to import, imported files won't be hashed (superficial scan)",
+        help="map file to import, imported files won't be hashed again (superficial scan)",
     )
     argparser.add_argument("--export-map-file",
-        help="export map file that can be used to scan the same directory again",
+        help="export map file that can be used to scan the same directory again, saving time",
+    )
+    argparser.add_argument("--export-hashsums-file",
+        help="export file hash table (like md5sums)",
     )
     argparser.add_argument("--link-duplicates", action="store_true",
-        help="replace duplicates with hardlinks",
+        help="remove and replace duplicates with hardlinks (DANGER!)",
     )
-    argparser.add_argument("--skip-vanished", action="store_true",
-        help="skip files that vanished during the scan",
+    argparser.add_argument("--ignore-vanished", action="store_true",
+        help="don't warn about files that vanished during the scan",
+    )
+    argparser.add_argument("--fatal-vanished", action="store_true",
+        help="abort if files vanished during the scan",
+    )
+    argparser.add_argument("--hide-summary", action="store_true",
+        help="hide summary (footer)",
+    )
+    argparser.add_argument("--quiet", action="store_true",
+        help="hide standard output, don't list duplicates",
+    )
+    # TODO MD5 might not be available!?
+    argparser.add_argument("--md5", action="store_true",
+        help="calculate and compare MD5 hashes",
+    )
+    argparser.add_argument("--sha1", action="store_true",
+        help="calculate and compare SHA1 hashes",
+    )
+    argparser.add_argument("--sha224", action="store_true",
+        help="calculate and compare SHA224 hashes",
+    )
+    argparser.add_argument("--sha256", action="store_true",
+        help="calculate and compare SHA256 hashes",
+    )
+    argparser.add_argument("--sha384", action="store_true",
+        help="calculate and compare SHA384 hashes",
+    )
+    argparser.add_argument("--sha512", action="store_true",
+        help="calculate and compare SHA512 hashes",
     )
     argparser.add_argument("--debug", action="store_true",
         help="enable debug logging",
@@ -254,8 +342,22 @@ def main():
     # Get started
     debug("Initiating scanner for selected directory: %s" % (dir))
     opts = {}
-    if args.skip_vanished:
-        opts["skip-vanished"] = True
+    if args.ignore_vanished:
+        opts["ignore-vanished"] = True
+    if args.fatal_vanished:
+        opts["fatal-vanished"] = True
+    if args.md5:
+        opts["algorithms"] = opts.get("algorithms", []) + ["MD5"]
+    if args.sha1:
+        opts["algorithms"] = opts.get("algorithms", []) + ["SHA1"]
+    if args.sha224:
+        opts["algorithms"] = opts.get("algorithms", []) + ["SHA224"]
+    if args.sha256:
+        opts["algorithms"] = opts.get("algorithms", []) + ["SHA256"]
+    if args.sha384:
+        opts["algorithms"] = opts.get("algorithms", []) + ["SHA384"]
+    if args.sha512:
+        opts["algorithms"] = opts.get("algorithms", []) + ["SHA512"]
     dupefilemap = DupeFileMap(dir, **opts)
 
     # Import old map
@@ -274,44 +376,76 @@ def main():
     # Calculate hash sums
     dupefilemap.hash()
 
-    # Import/export
+    # Import/export map file
     if args.export_map_file:
+        debug("Exporting map file: %s" % (args.export_map_file))
         with open(args.export_map_file, "w") as file:
             file.write(dupefilemap.json())
 
+    # Export hashsums file ("-" == stdout)
+    if args.export_hashsums_file:
+        args.quiet = True
+        debug("Exporting hashsums file: %s" % (args.export_hashsums_file))
+        cur_algorithm = dupefilemap.default_algorithm()
+        with file_open(args.export_hashsums_file, 'w') as f:
+            for file_info in dupefilemap.list():
+                cur_path = file_info["Path"]
+                cur_hash = file_info[cur_algorithm]
+                print("%s\t%s" % (cur_hash, cur_path), file=f)
+
     # Go through list of duplicate groups
+    rc = 0
     duplicates_map = dupefilemap.duplicates_map()
     total_wasted_space = 0
     replaced_files = 0
     for hash, list in duplicates_map.items():
+        # Duplicate group (group of identical files)
         group_wasted_space = 0
-        print("[%s]" % (hash))
+        if not args.quiet:
+            print("[%s]" % (hash))
         for i, file_info in enumerate(list):
+            # List file in group
+            if not rc:
+                rc = 2 # at least one duplicate group found
             cur_path = file_info["Path"]
             if i == 0:
-                print("* %s" % (cur_path))
+                if not args.quiet:
+                    print("* %s" % (cur_path)) # first file in group
                 src_path = cur_path
             else:
                 group_wasted_space += file_info["Size"]
-                print("- %s" % (cur_path))
+                if not args.quiet:
+                    print("- %s" % (cur_path)) # (another) duplicate
                 if args.link_duplicates:
-                    print("    REPLACING #%s ..." % (file_info["Inum"]))
+                    # Replace duplicate with hardlink
+                    # TODO this isn't the safest approach - maybe create link first, then remove duplicate...
+                    rc = 4 # at least one duplicate replaced
+                    debug("REPLACING file #%s: %s -> %s" % (file_info["Inum"], cur_path, src_path))
+                    if not args.quiet:
+                        print("    REPLACING #%s ..." % (file_info["Inum"]))
                     os.remove(cur_path)
                     os.link(src_path, cur_path)
                     replaced_files += 1
         total_wasted_space += group_wasted_space
-        print()
+        if not args.quiet:
+            print()
 
     # Show summary
-    total_file_count = len(dupefilemap.list())
-    total_files_size = sum(x["Size"] for x in dupefilemap.list())
-    print("Files:\t\t\t%s" % (total_file_count))
-    print("Total size:\t\t%s B" % (total_files_size))
-    print("Duplicate groups:\t%s" % (len(duplicates_map)))
-    print("Total wasted space:\t%s B" % (total_wasted_space))
-    print("Replaced files:\t\t%s" % (replaced_files))
+    # TODO format file size units
+    if not (args.hide_summary or args.quiet):
+        total_file_count = len(dupefilemap.list())
+        total_files_size = sum(x["Size"] for x in dupefilemap.list())
+        print("Files (scanned):\t%s" % (total_file_count))
+        if dupefilemap.imported_hashed_files():
+            print("Files (imported):\t%s" % (len(dupefilemap.imported_hashed_files())))
+        print("Total size:\t\t%s B" % (total_files_size))
+        print("Duplicate groups:\t%s" % (len(duplicates_map)))
+        print("Total wasted space:\t%s B" % (total_wasted_space))
+        print("Replaced files:\t\t%s" % (replaced_files))
+
+    return rc
 
 
 if __name__ == '__main__':
-    main()
+    exit(main())
 
