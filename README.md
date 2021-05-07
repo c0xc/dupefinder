@@ -52,11 +52,11 @@ $ ./dupefinder.py test/; echo rc=$?
 - test/foof/dir2/filetwo
 - test/foof/dir2/filetwotwo
 
-Files (scanned):	14
-Total size:		    7340098 B
-Duplicate groups:	1
-Total wasted space:	30 B
-Replaced files:		0
+Files (scanned):    14
+Total size:         7340098 B
+Duplicate groups:   1
+Total wasted space: 30 B
+Replaced files:     0
 rc=2
 ```
 
@@ -83,7 +83,7 @@ Second run, import map file:
 # time dupefinder.py --import-map-file /tmp/files.map --export-map-file /tmp/files.map .
 ...
 Files:                  22837
-Total size:         4210329975535 B
+Total size:             4210329975535 B
 Duplicate groups:       6860
 Total wasted space:     2364639100866 B
 Replaced files:         0
