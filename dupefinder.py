@@ -177,11 +177,12 @@ class DupeFileMap():
                 # File appears to have vanished
                 if self._opts.get("ignore-vanished"):
                     debug("file vanished before it could be hashed: " + path)
-                    file_list.remove(file_data) # iterating over copy, above
-                    continue
                 elif self._opts.get("fatal-vanished"):
                     raise Exception("file vanished before it could be hashed: " + path)
-                warning("file vanished before it could be hashed: " + path)
+                else:
+                    warning("file vanished before it could be hashed: " + path)
+                file_list.remove(file_data) # remove, iterating over list copy
+                continue
 
             # Old file info and hash from imported map
             old_file_data = old_file_map.get(path) # or undefined
