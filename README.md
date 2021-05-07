@@ -63,6 +63,14 @@ rc=2
 Return code 2 indicates that it has found duplicates.
 If duplicates are removed/replaced, the return code will be 4.
 
+
+Generate map file and convert it to md5sums file:
+```
+$ ./dupefinder.py --quiet --md5 --export-map-file /tmp/test.map test/; echo rc=$?
+$ ./dupefinder.py --md5 --import-map-file /tmp/test.map --export-hashsums-file - test/ >~/tmp/test.sums
+```
+
+
 Scan directory and export map file for the next run:
 ```
 # time dupefinder.py --export-map-file /tmp/files.map .
