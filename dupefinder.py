@@ -34,7 +34,7 @@ class DupeFileMap():
     def __init__(self, dir, *args, **kwargs):
 
         self._dirs = []
-        self._dirs.append(dir)
+        self._dirs.extend(dir)
 
         self._file_list = None
         self._old_hash_map = None
@@ -334,7 +334,7 @@ def parse_args():
     argparser.add_argument("--debug", action="store_true",
         help="enable debug logging",
     )
-    argparser.add_argument("dir",
+    argparser.add_argument("dir", nargs='+',
         help="search directory",
     )
     return argparser.parse_args()
@@ -349,8 +349,9 @@ def main():
 
     # Check search directory
     dir = args.dir
-    if not os.path.isdir(dir):
-        raise Exception("search path not found: " + dir)
+    for d in dir:
+        if not os.path.isdir(d):
+            raise Exception("search path not found: " + d)
 
     # Get started
     debug("Initiating scanner for selected directory: %s" % (dir))
