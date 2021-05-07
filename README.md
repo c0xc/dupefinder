@@ -65,7 +65,7 @@ If duplicates are removed/replaced, the return code will be 4.
 
 Scan directory and export map file for the next run:
 ```
-# time dupefinder.py --export-map-file files.map .
+# time dupefinder.py --export-map-file /tmp/files.map .
 ...
 Files:                  22719
 Total size:             4221404983496 B
@@ -80,10 +80,10 @@ sys     36m41.507s
 
 Second run, import map file:
 ```
-# time dupefinder.py --import-map-file files.map .
+# time dupefinder.py --import-map-file /tmp/files.map --export-map-file /tmp/files.map .
 ...
 Files:                  22837
-Total size:             4210329975535 B
+Total size:         4210329975535 B
 Duplicate groups:       6860
 Total wasted space:     2364639100866 B
 Replaced files:         0
@@ -93,9 +93,8 @@ user    1m40.933s
 sys     0m19.408s
 ```
 
-In this example, the first run took more than half a day
-and the second run took only a couple of minutes.
-
+In this example, the first run took more than half a day and the second run
+took only a couple of minutes because only new files were hashed.
 
 
 
