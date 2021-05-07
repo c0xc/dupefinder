@@ -45,7 +45,25 @@ especially if this tool is run regularly (as a cron job).
 Example
 -------
 
-First run (example):
+```
+$ ./dupefinder.py test/; echo rc=$?
+[26bb73556ceb32a5df30b733c5355ee5]
+* test/foof/dir1/f1
+- test/foof/dir2/filetwo
+- test/foof/dir2/filetwotwo
+
+Files (scanned):	14
+Total size:		    7340098 B
+Duplicate groups:	1
+Total wasted space:	30 B
+Replaced files:		0
+rc=2
+```
+
+Return code 2 indicates that it has found duplicates.
+If duplicates are removed/replaced, the return code will be 4.
+
+Scan directory and export map file for the next run:
 ```
 # time dupefinder.py --export-map-file files.map .
 ...
@@ -60,7 +78,7 @@ user    216m4.000s
 sys     36m41.507s
 ```
 
-Second run:
+Second run, import map file:
 ```
 # time dupefinder.py --import-map-file files.map .
 ...
