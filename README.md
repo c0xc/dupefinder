@@ -63,9 +63,7 @@ sys     36m41.507s
 Second run:
 ```
 # time dupefinder.py --import-map-file files.map .
-```
 ...
-
 Files:                  22837
 Total size:             4210329975535 B
 Duplicate groups:       6860

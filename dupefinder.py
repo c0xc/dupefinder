@@ -45,24 +45,6 @@ class DupeFileMap():
             if k == "old-map":
                 self.import_old_file(v)
 
-        for user_algo in self.user_algorithms():
-            if user_algo not in self.algorithms():
-                raise Exception("unknown algorithm: %s" % (user_algo))
-
-    def algorithms(self, map=False):
-        algos = {
-            "MD5": hashlib.md5(),
-            "SHA1": hashlib.sha1(),
-            "SHA224": hashlib.sha224(),
-            "SHA256": hashlib.sha256(),
-            "SHA384": hashlib.sha384(),
-            "SHA512": hashlib.sha512(),
-        }
-        if map:
-            return algos
-        else:
-            return algos.keys()
-
     def import_old(self, old_hash_struct):
         old_map = {}
         # TODO validate format ... expected_keys = ("Path", "Size", algorithm)
@@ -131,31 +113,66 @@ class DupeFileMap():
 
         return file_map
 
-    def user_algorithms(self):
+    def user_algorithms(self, default=False):
         user_algorithms = []
+        # List of user-defined algorithms (may be empty)
         # ctor > opts > algorithms
-        user_algos = self._opts.get("algorithms", [])
-        if user_algos:
-            for user_algo in user_algos:
+        if self._opts.get("algorithms"):
+            for user_algo in self._opts.get("algorithms", []):
                 user_algorithms.append(user_algo)
+        # Return default algorithm only if requested (instead of an empty list)
+        if not user_algorithms and default:
+            user_algorithms.append(self._opts["default-algorithm"])
         return user_algorithms
 
     def default_algorithm(self):
-        first_algorithm = self._opts["default-algorithm"]
-        if self.user_algorithms():
-            first_algorithm = self.user_algoriths()[0]
-        return first_algorithm
+        return self.user_algorithms(default=True)[0]
+
+    def algorithms(self, map=False, all=False):
+        python_list = hashlib.algorithms_available
+        user_list = [x.lower() for x in self.user_algorithms(default=True)]
+        requested_list = python_list if all else user_list
+        # Map of standard hash algorithms, with hash generator object
+        algos = {}
+        # This may be preferred but it mixes up the order
+        # if "sha1" in requested_list: algos["SHA1"] = hashlib.sha1()
+        # if "sha224" in requested_list: algos["SHA224"] = hashlib.sha224()
+        # if "sha256" in requested_list: algos["SHA256"] = hashlib.sha256()
+        # if "sha384" in requested_list: algos["SHA384"] = hashlib.sha384()
+        # if "sha512" in requested_list: algos["SHA512"] = hashlib.sha512()
+        # MD5 might be missing because someone wanted to be "FIPS compliant"
+        if "md5" in requested_list:
+            if "md5" in python_list:
+                algos["MD5"] = hashlib.md5()
+            elif "md5" in user_list:
+                raise Exception("MD5 requested but not available")
+        # Add more algorithms if available or requested
+        for algo in requested_list:
+            if algo.upper() not in algos:
+                try:
+                    hashobj = hashlib.new(algo)
+                    algos[algo.upper()] = hashobj
+                except ValueError as e:
+                    raise SystemExit("unknown hash algorithm: %s" % (algo))
+
+        if map:
+            return algos
+        else:
+            return algos.keys()
 
     def hash(self):
         file_list = self._file_list
         if file_list is None:
             raise Exception("no file list, need to scan first")
         old_file_map = self._old_hash_map or {}
+        file_inum_map = self._file_inum_map = {}
         self._files_with_imported_hash = []
 
         for file_data in file_list[:]:
             path = file_data["Path"]
             name = os.path.basename(path)
+            inum = file_data["Inum"]
+            # Check if file still exists (time may have passed since scan)
             if not os.path.isfile(path):
                 # File appears to have vanished
                 if self._opts.get("ignore-vanished"):
@@ -165,57 +182,49 @@ class DupeFileMap():
                 elif self._opts.get("fatal-vanished"):
                     raise Exception("file vanished before it could be hashed: " + path)
                 warning("file vanished before it could be hashed: " + path)
+
+            # Old file info and hash from imported map
             old_file_data = old_file_map.get(path) # or undefined
             if not old_file_data:
-                for data in old_file_map.values():
+                for data in old_file_map.values(): # TODO optional... --use-full-path
                     if data.get("FullPath") == file_data["FullPath"]:
                         old_file_data = data
                         break
+            got_old_file_date = old_file_data is not None
 
             # Wanted hash algorithms dict
-            algos = {
-                "MD5": hashlib.md5(),
-                "SHA1": hashlib.sha1(),
-                "SHA224": hashlib.sha224(),
-                "SHA256": hashlib.sha256(),
-                "SHA384": hashlib.sha384(),
-                "SHA512": hashlib.sha512(),
-            }
-            if self.user_algorithms():
-                # ctor > opts > algorithms
-                for a in list(algos.keys()):
-                    if a not in self.user_algorithms(): # TODO optimize
-                        del algos[a]
-            else:
-                # Use default algorithm
-                for a in list(algos.keys()):
-                    if a != self.default_algorithm():
-                        del algos[a]
+            algos = self.algorithms(map=True)
 
             # Get previously calculated hashes from old map
+            debug(path)
             remaining_algos = algos.copy()
+            if file_inum_map.get(inum):
+                # Hardlink already hashed
+                debug("file #%d already hashed: %s" % (inum, name))
+                old_file_data = file_inum_map.get(inum)
             for a in list(remaining_algos.keys()):
                 if old_file_data and old_file_data.get(a):
                     # Got old hash, just check size hasn't changed
-                    debug("file found in map: %s" % (name))
                     if old_file_data.get("Size") != file_data["Size"]:
                         # File has changed or different file, recalculate
                         debug("file found in map but wrong size, skip: %s" % (name))
                         continue
-                    debug("file found in old map: %s" % (name))
+                    debug("%s file hash already map: %s" % (a, name))
                     file_data[a] = old_file_data[a]
                     del remaining_algos[a]
 
             # Calculate hashes
             with open(path, "rb") as f:
                 if remaining_algos:
-                    debug("calculating hash sum(s) (%s) for: %s" % (",".join(remaining_algos.keys()), name))
+                    debug("calculating hash sum(s) (%s) for: %s" % (", ".join(remaining_algos.keys()), name))
+                    file_inum_map[inum] = file_data
                     for chunk in iter(lambda: f.read(4096), b""):
                         for a, hashobj in remaining_algos.items():
                             hashobj.update(chunk)
                 else:
                     debug("not recalculating hash: %s" % (name))
-                    self._files_with_imported_hash.append(path)
+                    if got_old_file_date:
+                        self._files_with_imported_hash.append(path)
 
                 for a, hashobj in remaining_algos.items():
                     file_data[a] = hashobj.hexdigest()
@@ -296,6 +305,7 @@ def parse_args():
     argparser.add_argument("--hide-summary", action="store_true",
         help="hide summary (footer)",
     )
+    # TODO --use-full-path
     argparser.add_argument("--quiet", action="store_true",
         help="hide standard output, don't list duplicates",
     )
@@ -318,6 +328,9 @@ def parse_args():
     argparser.add_argument("--sha512", action="store_true",
         help="calculate and compare SHA512 hashes",
     )
+    argparser.add_argument("--algorithm", action="append",
+        help="calculate and compare using this hash algorithm",
+    )
     argparser.add_argument("--debug", action="store_true",
         help="enable debug logging",
     )
@@ -332,7 +345,7 @@ def main():
 
     # Logging
     if args.debug:
-        logging.basicConfig(level=logging.DEBUG)
+        logging.basicConfig(level=logging.DEBUG, format='[%(levelname)s] %(message)s',)
 
     # Check search directory
     dir = args.dir
@@ -358,6 +371,8 @@ def main():
         opts["algorithms"] = opts.get("algorithms", []) + ["SHA384"]
     if args.sha512:
         opts["algorithms"] = opts.get("algorithms", []) + ["SHA512"]
+    for algo_arg in args.algorithm or []:
+        opts["algorithms"] = opts.get("algorithms", []) + [algo_arg.upper()]
     dupefilemap = DupeFileMap(dir, **opts)
 
     # Import old map
@@ -406,7 +421,7 @@ def main():
         for i, file_info in enumerate(list):
             # List file in group
             if not rc:
-                rc = 2 # at least one duplicate group found
+                rc = 2 # meaning at least one duplicate group found
             cur_path = file_info["Path"]
             if i == 0:
                 if not args.quiet:
@@ -418,8 +433,9 @@ def main():
                     print("- %s" % (cur_path)) # (another) duplicate
                 if args.link_duplicates:
                     # Replace duplicate with hardlink
-                    # TODO this isn't the safest approach - maybe create link first, then remove duplicate...
-                    rc = 4 # at least one duplicate replaced
+                    # TODO this probably isn't the safest approach
+                    # maybe create the link first, then remove the duplicate...
+                    rc = 4 # meaning at least one duplicate replaced
                     debug("REPLACING file #%s: %s -> %s" % (file_info["Inum"], cur_path, src_path))
                     if not args.quiet:
                         print("    REPLACING #%s ..." % (file_info["Inum"]))
