@@ -345,8 +345,12 @@ def main():
     args = parse_args()
 
     # Logging
+    log_opts = {
+        "format": "[%(levelname)s] %(message)s",
+    }
     if args.debug:
-        logging.basicConfig(level=logging.DEBUG, format='[%(levelname)s] %(message)s',)
+        log_opts["level"] = logging.DEBUG
+    logging.basicConfig(**log_opts)
 
     # Check search directory
     dir = args.dir
